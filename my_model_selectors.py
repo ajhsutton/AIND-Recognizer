@@ -59,7 +59,7 @@ class SelectorConstant(ModelSelector):
         """
         best_num_components = self.n_constant
         return self.base_model(best_num_components)
-
+    
 
 class SelectorBIC(ModelSelector):
     """ select the model with the lowest Bayesian Information Criterion(BIC) score
@@ -67,7 +67,7 @@ class SelectorBIC(ModelSelector):
     http://www2.imm.dtu.dk/courses/02433/doc/ch6_slides.pdf
     Bayesian information criteria: BIC = -2 * logL + p * logN
     """
-
+    
     def select(self):
         """ select the best model for self.this_word based on
         BIC score for n between self.min_n_components and self.max_n_components
@@ -75,10 +75,31 @@ class SelectorBIC(ModelSelector):
         :return: GaussianHMM object
         """
         warnings.filterwarnings("ignore", category=DeprecationWarning)
-
+        
         # TODO implement model selection based on BIC scores
-        raise NotImplementedError
-
+        bic_score = float('-Inf')
+        best_model_score = float('-Inf')
+        best_model = []
+        
+        for n_states in range(self.min_n_components,self.max_n_components):
+            # Generate Model for number of components
+            try: 
+                hmm_n = self.base_model(n_states)
+            except:
+                return None
+            
+            try:
+                logL = hmm_n.score(self.X, self.lengths)
+                bic_score = -2*logL + n_states*np.log(len(self.lengths))
+            except:
+                bic_score = float('-Inf')
+            
+            if bic_score > best_model_score:
+                best_model_score = bic_score
+                best_model = hmm_n
+        print(bic_score)
+        return best_model
+        
 
 class SelectorDIC(ModelSelector):
     ''' select best model based on Discriminative Information Criterion
@@ -92,9 +113,35 @@ class SelectorDIC(ModelSelector):
 
     def select(self):
         warnings.filterwarnings("ignore", category=DeprecationWarning)
+        
+        dic_models_logLs = []
+        dic_models = []
 
-        # TODO implement model selection based on DIC scores
-        raise NotImplementedError
+        for n_states in range(self.min_n_components,self.max_n_components):
+            # Generate Model for number of components
+            try: 
+                hmm_n = self.base_model(n_states)
+            except:
+                return None
+            try:
+                model_logL = hmm_n.score(self.X, self.lengths)
+            except:
+                model_logL = float('-Inf')
+            # Save Model and LogLiklihood
+            dic_models.append(hmm_n)
+            dic_models_logLs.append(model_logL)
+        
+        # Evaluate DIC Criterion
+        L_i = len(dic_models)
+        best_model_score = float('-Inf')
+        best_model = []
+        for iModel in range(L_i):
+            other_model_logL_sum = sum([dic_models_logLs[ii] for ii in range(L_i) if ii != iModel])
+            dic_score = dic_models_logLs[iModel] - (other_model_logL_sum)/(L_i-1)
+            if dic_score > best_model_score:
+                best_model_score = dic_score
+                best_model = dic_models[iModel]
+        return best_model
 
 
 class SelectorCV(ModelSelector):
@@ -104,6 +151,6 @@ class SelectorCV(ModelSelector):
 
     def select(self):
         warnings.filterwarnings("ignore", category=DeprecationWarning)
-
+        
         # TODO implement model selection using CV
         raise NotImplementedError
