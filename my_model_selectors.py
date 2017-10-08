@@ -66,6 +66,18 @@ class SelectorBIC(ModelSelector):
 
     http://www2.imm.dtu.dk/courses/02433/doc/ch6_slides.pdf
     Bayesian information criteria: BIC = -2 * logL + p * logN
+    
+    Note: For a GaussianHMM, there are two model parameters per feature
+    per state (mean and std). Also assuming a fully connected state 
+    transition matrix with n x (n - 1) transition probailities.
+    
+    We also need to estimate the initial state distribution: (n-1 degrees-of-freedom)
+    
+    Assuming 'd' features:
+    
+    N = n*(n-1) + 2*d*n + (n-1)
+    
+    
     """
     
     def select(self):
@@ -77,27 +89,32 @@ class SelectorBIC(ModelSelector):
         warnings.filterwarnings("ignore", category=DeprecationWarning)
         
         # TODO implement model selection based on BIC scores
-        bic_score = float('-Inf')
-        best_model_score = float('-Inf')
+        bic_score = float('Inf')
+        best_model_score = float('Inf')
         best_model = []
+        
+        num_features = len(self.X[0])
+        num_data_points = sum(self.lengths)
         
         for n_states in range(self.min_n_components,self.max_n_components):
             # Generate Model for number of components
+            # Model Free-Parameters
+            num_parameters = (n_states*(n_states-1) # Transition Probabilities
+                              + (n_states - 1) # Initial distribution
+                              + 2*n_states*num_features) # 2 Parameters per state (mean, var)
+            
             try: 
                 hmm_n = self.base_model(n_states)
-            except:
-                return None
-            
-            try:
                 logL = hmm_n.score(self.X, self.lengths)
-                bic_score = -2*logL + n_states*np.log(len(self.lengths))
+                
+                # BIC score
+                bic_score = -2*logL + num_parameters*np.log(num_data_points)
             except:
-                bic_score = float('-Inf')
-            
-            if bic_score > best_model_score:
+                bic_score = float('Inf')
+
+            if bic_score <= best_model_score:
                 best_model_score = bic_score
                 best_model = hmm_n
-        print(bic_score)
         return best_model
         
 
@@ -116,31 +133,46 @@ class SelectorDIC(ModelSelector):
         
         dic_models_logLs = []
         dic_models = []
-
+        best_model = None
+        best_model_score = float('-Inf')
+        
         for n_states in range(self.min_n_components,self.max_n_components):
+            print(n_states)
             # Generate Model for number of components
             try: 
                 hmm_n = self.base_model(n_states)
             except:
                 return None
+                
             try:
+                # DIC tests two components:
+                # - The evidence LogL, and
+                # - The anti-evidence LogL
                 model_logL = hmm_n.score(self.X, self.lengths)
             except:
-                model_logL = float('-Inf')
-            # Save Model and LogLiklihood
-            dic_models.append(hmm_n)
-            dic_models_logLs.append(model_logL)
-        
-        # Evaluate DIC Criterion
-        L_i = len(dic_models)
-        best_model_score = float('-Inf')
-        best_model = []
-        for iModel in range(L_i):
-            other_model_logL_sum = sum([dic_models_logLs[ii] for ii in range(L_i) if ii != iModel])
-            dic_score = dic_models_logLs[iModel] - (other_model_logL_sum)/(L_i-1)
+                print('Failed to Train DIC for ' + self.this_word)
+                dic_score = float('-Inf')
+                break
+                
+            # Get the log-likelihood for competing classes
+            nonmodel_logL = []
+            counfouders = [key for key in self.hwords.keys() 
+                                  if key != self.this_word]
+            
+            for word in counfouders:
+                nonmodel_X, nonmodel_lengths = self.hwords[word]
+                try:
+                    conf_score = hmm_n.score(nonmodel_X, nonmodel_lengths)
+                    nonmodel_logL.append(conf_score)
+                except: 
+                    print('\t Failed on ' + word)
+                    
+            dic_score = model_logL - np.mean(nonmodel_logL)
+            
             if dic_score > best_model_score:
                 best_model_score = dic_score
-                best_model = dic_models[iModel]
+                best_model = hmm_n
+                
         return best_model
 
 
@@ -153,4 +185,38 @@ class SelectorCV(ModelSelector):
         warnings.filterwarnings("ignore", category=DeprecationWarning)
         
         # TODO implement model selection using CV
-        raise NotImplementedError
+        for n_states in range(self.min_n_components,self.max_n_components):
+            # Generate Model for number of components
+            # KFold model testing
+            split_method = KFold()
+            
+            cv_model_logL = []
+            cv_models_n = []
+            best_score = float('-Inf')
+            best_model_n = self.min_n_components
+                        
+            # Generate models for each Training sequence
+            try:
+                for cv_train_idx, cv_test_idx in split_method.split(self.X):
+                    # Generate CV Sequences
+                    cv_train_X, cv_train_lengths = combine_sequences(cv_train_idx, self.sequences)
+                    cv_test_X, cv_test_lengths = combine_sequences(cv_test_idx, self.sequences)
+
+                    hmm_model_n = GaussianHMM(n_components=num_states, covariance_type="diag", n_iter=1000,
+                                        random_state=self.random_state, verbose=False).fit(cv_train_X, cv_train_lengths)
+                    # Score Model
+                    cv_model_score = hmm_n.score(cv_test_X, cv_test_lengths)
+                    print(cv_model_score)
+                    cv_model_logL.append(cv_model_score)
+                cv_score = mean(cv_model_logL)
+                print(cv_model_logL)
+                print(cv_score)
+            except:
+                cv_score = float('-Inf')
+            
+            # Select Best Model Class from Cross-Validation
+            if cv_score > best_score:
+                best_score = cv_score
+                best_model_n = n_states
+                
+        return self.base_model(best_model_n)
