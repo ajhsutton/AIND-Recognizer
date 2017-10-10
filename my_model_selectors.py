@@ -109,7 +109,7 @@ class SelectorBIC(ModelSelector):
                 
                 # BIC score
                 bic_score = -2*logL + num_parameters*np.log(num_data_points)
-            except:
+            except ValueError:
                 bic_score = float('Inf')
 
             if bic_score <= best_model_score:
@@ -137,37 +137,35 @@ class SelectorDIC(ModelSelector):
         best_model_score = float('-Inf')
         
         for n_states in range(self.min_n_components,self.max_n_components):
-            print(n_states)
             # Generate Model for number of components
             try: 
                 hmm_n = self.base_model(n_states)
-            except:
+            except ValueError:
                 return None
-                
+            
             try:
-                # DIC tests two components:
-                # - The evidence LogL, and
-                # - The anti-evidence LogL
-                model_logL = hmm_n.score(self.X, self.lengths)
-            except:
-                print('Failed to Train DIC for ' + self.this_word)
-                dic_score = float('-Inf')
-                break
-                
+                if hmm_n:
+                    model_logL = hmm_n.score(self.X, self.lengths)
+                else: 
+                    model_logL = float('-Inf')
+            except ValueError:
+                model_logL = float('-Inf')
+            
             # Get the log-likelihood for competing classes
             nonmodel_logL = []
-            counfouders = [key for key in self.hwords.keys() 
-                                  if key != self.this_word]
-            
+            counfouders = [key for key in self.hwords.keys() if key != self.this_word]
             for word in counfouders:
                 nonmodel_X, nonmodel_lengths = self.hwords[word]
-                try:
-                    conf_score = hmm_n.score(nonmodel_X, nonmodel_lengths)
-                    nonmodel_logL.append(conf_score)
-                except: 
-                    print('\t Failed on ' + word)
-                    
-            dic_score = model_logL - np.mean(nonmodel_logL)
+                if hmm_n:
+                    try:
+                        conf_score = hmm_n.score(nonmodel_X, nonmodel_lengths)
+                        nonmodel_logL.append(conf_score)
+                    except ValueError:
+                        continue # Ignore Failed Confounders
+            if len(nonmodel_logL) > 0:
+                dic_score = model_logL - np.mean(nonmodel_logL)
+            else:
+                dic_score = model_logL
             
             if dic_score > best_model_score:
                 best_model_score = dic_score
@@ -185,33 +183,43 @@ class SelectorCV(ModelSelector):
         warnings.filterwarnings("ignore", category=DeprecationWarning)
         
         # TODO implement model selection using CV
+        # KFold Cross-Validation
+        split_method = KFold()
+        cv_models_n = []
+        best_model_n = self.min_n_components
+        best_score = float('-Inf')
+
         for n_states in range(self.min_n_components,self.max_n_components):
             # Generate Model for number of components
-            # KFold model testing
-            split_method = KFold()
-            
-            cv_model_logL = []
-            cv_models_n = []
-            best_score = float('-Inf')
-            best_model_n = self.min_n_components
                         
             # Generate models for each Training sequence
-            try:
-                for cv_train_idx, cv_test_idx in split_method.split(self.X):
-                    # Generate CV Sequences
-                    cv_train_X, cv_train_lengths = combine_sequences(cv_train_idx, self.sequences)
-                    cv_test_X, cv_test_lengths = combine_sequences(cv_test_idx, self.sequences)
+            cv_model_logL = []
 
-                    hmm_model_n = GaussianHMM(n_components=num_states, covariance_type="diag", n_iter=1000,
-                                        random_state=self.random_state, verbose=False).fit(cv_train_X, cv_train_lengths)
-                    # Score Model
-                    cv_model_score = hmm_n.score(cv_test_X, cv_test_lengths)
-                    print(cv_model_score)
-                    cv_model_logL.append(cv_model_score)
-                cv_score = mean(cv_model_logL)
-                print(cv_model_logL)
-                print(cv_score)
-            except:
+            try:
+                if len(self.sequences) <= 3:
+                    # For short sequences, ignore KFold split
+                    hmm_model_n = self.base_model(n_states)
+                    cv_score = hmm_model_n.score(self.X, self.lengths)
+                else:
+                    for cv_train_idx, cv_test_idx in split_method.split(self.sequences):                    
+                        # Generate CV Sequences                      
+                        cv_train_X, cv_train_lengths = combine_sequences(cv_train_idx, 
+                                self.sequences)
+                        cv_test_X, cv_test_lengths = combine_sequences(cv_test_idx, 
+                                self.sequences)
+                
+                        # Train on the Training Data Set
+                        #try:
+                        
+                        hmm_model_n = GaussianHMM(n_components=n_states, 
+                                        covariance_type="diag", n_iter=1000,
+                                        random_state=self.random_state, 
+                                        verbose=False).fit(cv_train_X, cv_train_lengths)
+                        # Score Model on the Test Set and Append
+                        cv_model_score = hmm_model_n.score(cv_test_X, cv_test_lengths)
+                        cv_model_logL.append(cv_model_score)
+                    cv_score = np.mean(cv_model_logL)
+            except ValueError:
                 cv_score = float('-Inf')
             
             # Select Best Model Class from Cross-Validation
