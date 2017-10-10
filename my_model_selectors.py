@@ -105,10 +105,13 @@ class SelectorBIC(ModelSelector):
             
             try: 
                 hmm_n = self.base_model(n_states)
-                logL = hmm_n.score(self.X, self.lengths)
+                if hmm_n:
+                    logL = hmm_n.score(self.X, self.lengths)
                 
-                # BIC score
-                bic_score = -2*logL + num_parameters*np.log(num_data_points)
+                    # BIC score
+                    bic_score = -2*logL + num_parameters*np.log(num_data_points)
+                else:
+                    bic_score = float('Inf')
             except ValueError:
                 bic_score = float('Inf')
 
@@ -199,7 +202,10 @@ class SelectorCV(ModelSelector):
                 if len(self.sequences) <= 3:
                     # For short sequences, ignore KFold split
                     hmm_model_n = self.base_model(n_states)
-                    cv_score = hmm_model_n.score(self.X, self.lengths)
+                    if hmm_model_n:
+                        cv_score = hmm_model_n.score(self.X, self.lengths)
+                    else:
+                        cv_score = float('-Inf')
                 else:
                     for cv_train_idx, cv_test_idx in split_method.split(self.sequences):                    
                         # Generate CV Sequences                      
@@ -208,16 +214,17 @@ class SelectorCV(ModelSelector):
                         cv_test_X, cv_test_lengths = combine_sequences(cv_test_idx, 
                                 self.sequences)
                 
-                        # Train on the Training Data Set
-                        #try:
-                        
+                        # Train on the Training Data Set                        
                         hmm_model_n = GaussianHMM(n_components=n_states, 
                                         covariance_type="diag", n_iter=1000,
                                         random_state=self.random_state, 
                                         verbose=False).fit(cv_train_X, cv_train_lengths)
                         # Score Model on the Test Set and Append
-                        cv_model_score = hmm_model_n.score(cv_test_X, cv_test_lengths)
-                        cv_model_logL.append(cv_model_score)
+                        if hmm_model_n:
+                            cv_model_score = hmm_model_n.score(cv_test_X, cv_test_lengths)
+                            cv_model_logL.append(cv_model_score)
+                        else:
+                            float('-Inf')
                     cv_score = np.mean(cv_model_logL)
             except ValueError:
                 cv_score = float('-Inf')
